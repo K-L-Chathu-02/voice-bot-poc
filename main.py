@@ -31,6 +31,39 @@ def get_broadband_packages(max_price: float = None, min_data: int = None) -> str
     
     # Return raw data to the LLM
     return str(results) if results else "No packages found matching those criteria."
+# --- TOOL 2: Check Balance ---
+@tool
+def check_account_balance(phone_number: str) -> str:
+    """
+    Use this to check a customer's outstanding bill and remaining data balance. 
+    You MUST ask the user for their phone number before calling this tool.
+    """
+    cursor.execute("SELECT name, outstanding_bill_lkr, remaining_data_gb FROM customers WHERE phone_number = ?", (phone_number,))
+    result = cursor.fetchone()
+    
+    if result:
+        return f"Customer {result[0]} owes {result[1]} LKR and has {result[2]} GB of data remaining."
+    else:
+        return f"No account found for phone number {phone_number}."
+
+# --- TOOL 3: Report Fault ---
+@tool
+def report_network_fault(phone_number: str, issue_description: str) -> str:
+    """
+    Use this to log a network issue, router problem, or internet outage. 
+    You MUST ask the user for their phone number and the issue description before calling this tool.
+    """
+    # Insert the new ticket into the database
+    cursor.execute(
+        "INSERT INTO fault_tickets (phone_number, issue_description, status) VALUES (?, ?, 'OPEN')", 
+        (phone_number, issue_description)
+    )
+    conn.commit()
+    
+    # Get the auto-generated ticket ID
+    ticket_id = cursor.lastrowid
+    return f"Successfully created support ticket #{ticket_id}. The engineering team has been notified."
+
 
 def main():
     # 1. Check for API Keys
@@ -54,8 +87,7 @@ def main():
 
     # 3. Set up the LangChain Agent
     llm = ChatGoogleGenerativeAI(model="gemini-3.5-flash", temperature=0)
-    tools = [get_broadband_packages]
-    
+    tools = [get_broadband_packages, check_account_balance, report_network_fault]    
     agent = create_agent(
         model=llm, 
         tools=tools,
