@@ -1,0 +1,16 @@
+cat << 'EOF' > .gitignore
+# Environments
+.venv/
+env/
+
+# Databases
+*.db
+*.sqlite3
+
+# API Keys & Secrets
+.env
+
+# Python Cache
+__pycache__/
+*.pyc
+EOF
