@@ -10,9 +10,10 @@ DDL = [
         speed_mbps INTEGER NOT NULL
     )
     """,
-    """
+   """
     CREATE TABLE IF NOT EXISTS customers (
         phone_number TEXT PRIMARY KEY,
+        nic TEXT NOT NULL,
         name TEXT NOT NULL,
         outstanding_bill_lkr REAL NOT NULL DEFAULT 0,
         remaining_data_gb REAL NOT NULL DEFAULT 0,
@@ -76,10 +77,9 @@ SEED_PACKAGES = [
 ]
 
 SEED_CUSTOMERS = [
-    ("0712345678", "Kamal Perera", 1250.0, 15.5, 1),
-    ("0771112222", "Nimali Silva", 0.0, 45.0, 2),
+    ("0712345678", "981234567V", "Kamal Perera", 1250.0, 15.5, 1),
+    ("0771112222", "199912345678", "Nimali Silva", 0.0, 45.0, 2),
 ]
-
 SEED_PAYMENTS = [
     ("0712345678", 1500.0, "card", "****4421", "2026-04-15 10:14:00"),
     ("0712345678", 500.0, "reload_card", "RC8821", "2026-05-02 18:02:00"),
@@ -115,8 +115,8 @@ def apply(conn: sqlite3.Connection) -> None:
     )
     cur.executemany(
         "INSERT OR IGNORE INTO customers "
-        "(phone_number, name, outstanding_bill_lkr, remaining_data_gb, current_package_id) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "(phone_number, nic, name, outstanding_bill_lkr, remaining_data_gb, current_package_id) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
         SEED_CUSTOMERS,
     )
     cur.executemany(

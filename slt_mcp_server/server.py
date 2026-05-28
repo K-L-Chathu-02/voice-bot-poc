@@ -1,6 +1,6 @@
 import json
 from typing import Optional
-
+import os
 from mcp.server.fastmcp import FastMCP
 
 from . import db
@@ -29,20 +29,20 @@ def get_broadband_packages(
         rows = [dict(r) for r in cur.fetchall()]
     return {"ok": True, "packages": rows}
 
-
 @mcp.tool()
-def check_account_balance(phone_number: str) -> dict:
-    """Look up a customer's outstanding bill and remaining data. Requires the caller's phone number."""
+def check_account_balance(phone_number: str, nic: str) -> dict:
+    """Look up a customer's outstanding bill and remaining data. Requires phone number and NIC."""
     with db.cursor() as cur:
         cur.execute(
             "SELECT c.name, c.outstanding_bill_lkr, c.remaining_data_gb, p.name AS package_name "
             "FROM customers c LEFT JOIN packages p ON p.id = c.current_package_id "
-            "WHERE c.phone_number = ?",
-            (phone_number,),
+            "WHERE c.phone_number = ? AND c.nic = ?",
+            (phone_number, nic.upper()),
         )
         row = cur.fetchone()
     if not row:
-        return {"ok": False, "error": f"No account found for {phone_number}"}
+        return {"ok": False, "error": f"Authentication failed for {phone_number}. Incorrect NIC or phone number."}
+    
     return {
         "ok": True,
         "name": row["name"],
@@ -51,11 +51,15 @@ def check_account_balance(phone_number: str) -> dict:
         "current_package": row["package_name"],
     }
 
-
 @mcp.tool()
-def get_payment_history(phone_number: str, limit: int = 5) -> dict:
-    """Return the most recent payments on the account. Requires the caller's phone number."""
+def get_payment_history(phone_number: str, nic: str, limit: int = 5) -> dict:
+    """Return the most recent payments. Requires phone number and NIC."""
     with db.cursor() as cur:
+        # First authorize
+        cur.execute("SELECT 1 FROM customers WHERE phone_number = ? AND nic = ?", (phone_number, nic.upper()))
+        if not cur.fetchone():
+            return {"ok": False, "error": "Authentication failed. Incorrect NIC or phone number."}
+            
         cur.execute(
             "SELECT amount_lkr, method, reference, paid_at FROM payments "
             "WHERE phone_number = ? ORDER BY paid_at DESC LIMIT ?",
@@ -66,6 +70,39 @@ def get_payment_history(phone_number: str, limit: int = 5) -> dict:
         return {"ok": True, "payments": [], "note": "No payments on record."}
     return {"ok": True, "payments": rows}
 
+@mcp.tool()
+def purchase_data_addon(phone_number: str, nic: str, addon_code: str) -> dict:
+    """Buy a data add-on. Requires phone number, NIC, and addon_code."""
+    with db.cursor() as cur:
+        # First authorize and get remaining data
+        cur.execute("SELECT remaining_data_gb FROM customers WHERE phone_number = ? AND nic = ?", (phone_number, nic.upper()))
+        cust = cur.fetchone()
+        if not cust:
+            return {"ok": False, "error": "Authentication failed. Incorrect NIC or phone number."}
+            
+        cur.execute("SELECT data_gb, name, price_lkr FROM addons WHERE addon_code = ?", (addon_code,))
+        addon = cur.fetchone()
+        if not addon:
+            return {"ok": False, "error": f"Unknown addon: {addon_code}"}
+        
+        new_data = cust["remaining_data_gb"] + addon["data_gb"]
+        cur.execute(
+            "UPDATE customers SET remaining_data_gb = ? WHERE phone_number = ?",
+            (new_data, phone_number),
+        )
+        cur.execute(
+            "INSERT INTO transactions (phone_number, action, details) VALUES (?, ?, ?)",
+            (phone_number, "addon_purchase",
+             json.dumps({"addon_code": addon_code, "data_gb": addon["data_gb"],
+                         "price_lkr": addon["price_lkr"]})),
+        )
+    return {
+        "ok": True,
+        "addon": addon["name"],
+        "added_gb": addon["data_gb"],
+        "new_remaining_gb": new_data,
+        "price_lkr": addon["price_lkr"],
+    }
 
 @mcp.tool()
 def list_data_addons() -> dict:
@@ -139,39 +176,6 @@ def record_payment(
         "new_balance_lkr": new_balance,
     }
 
-
-@mcp.tool()
-def purchase_data_addon(phone_number: str, addon_code: str) -> dict:
-    """Buy a data add-on for a customer. addon_code comes from list_data_addons. Confirm with the caller before calling this."""
-    with db.cursor() as cur:
-        cur.execute("SELECT data_gb, name, price_lkr FROM addons WHERE addon_code = ?", (addon_code,))
-        addon = cur.fetchone()
-        if not addon:
-            return {"ok": False, "error": f"Unknown addon: {addon_code}"}
-        cur.execute("SELECT remaining_data_gb FROM customers WHERE phone_number = ?", (phone_number,))
-        cust = cur.fetchone()
-        if not cust:
-            return {"ok": False, "error": f"No account found for {phone_number}"}
-        new_data = cust["remaining_data_gb"] + addon["data_gb"]
-        cur.execute(
-            "UPDATE customers SET remaining_data_gb = ? WHERE phone_number = ?",
-            (new_data, phone_number),
-        )
-        cur.execute(
-            "INSERT INTO transactions (phone_number, action, details) VALUES (?, ?, ?)",
-            (phone_number, "addon_purchase",
-             json.dumps({"addon_code": addon_code, "data_gb": addon["data_gb"],
-                         "price_lkr": addon["price_lkr"]})),
-        )
-    return {
-        "ok": True,
-        "addon": addon["name"],
-        "added_gb": addon["data_gb"],
-        "new_remaining_gb": new_data,
-        "price_lkr": addon["price_lkr"],
-    }
-
-
 @mcp.tool()
 def change_package(phone_number: str, new_package_id: int) -> dict:
     """Switch a customer to a new broadband package. new_package_id comes from get_broadband_packages. Confirm with the caller before calling this."""
@@ -200,6 +204,42 @@ def change_package(phone_number: str, new_package_id: int) -> dict:
         "monthly_price_lkr": pkg["price_lkr"],
     }
 
+@mcp.tool()
+def search_technical_faq(query: str) -> dict:
+    """
+    Search the SLT technical troubleshooting guide for solutions to hardware or network issues. 
+    Pass a short string of keywords describing the user's issue (e.g., 'red light on router' or 'slow internet').
+    """
+    # Load the FAQ document
+    file_path = os.path.join(os.path.dirname(__file__), "tech_faqs.json")
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            faqs = json.load(f)
+    except FileNotFoundError:
+        return {"ok": False, "error": "FAQ document not found on the server."}
+
+    query_words = set(query.lower().split())
+    best_match = None
+    highest_score = 0
+
+    # Simple keyword matching algorithm
+    for faq in faqs:
+        score = sum(1 for keyword in faq["keywords"] if keyword in query_words or keyword in query.lower())
+        if score > highest_score:
+            highest_score = score
+            best_match = faq
+
+    if best_match:
+        return {
+            "ok": True,
+            "issue_identified": best_match["issue"],
+            "resolution_steps": best_match["resolution"]
+        }
+    
+    return {
+        "ok": True, 
+        "note": "No specific troubleshooting steps found for that issue. Advise the customer to report a network fault."
+    }
 
 def main() -> None:
     db.bootstrap()

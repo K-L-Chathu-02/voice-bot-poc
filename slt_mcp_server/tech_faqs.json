@@ -1,0 +1,17 @@
+[
+  {
+    "keywords": ["red light", "los", "router", "blinking"],
+    "issue": "LOS (Loss of Signal) red light blinking on the router.",
+    "resolution": "This indicates a physical fiber cable break. Please check if the yellow fiber cable is bent or unplugged. If the cable is intact, a technician needs to be dispatched. Would you like me to report a network fault for you?"
+  },
+  {
+    "keywords": ["slow", "speed", "buffering", "internet"],
+    "issue": "Slow internet speeds or continuous buffering.",
+    "resolution": "Please restart your router and wait for 2 minutes. If the issue persists, check if you have exceeded your package's daily data limit. I can check your remaining data balance if you provide your phone number."
+  },
+  {
+    "keywords": ["voice", "landline", "no dial tone", "phone"],
+    "issue": "No dial tone on the SLT voice landline.",
+    "resolution": "Please ensure the telephone cable is securely connected to the TEL1 port on your router. If it is connected and there is still no dial tone, the port may be deactivated or faulty."
+  }
+]
